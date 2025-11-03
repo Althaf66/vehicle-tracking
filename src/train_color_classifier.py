@@ -48,6 +48,7 @@ print(f"Classes: {class_names}")
 print(f"Number of classes: {num_classes}")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
 # Training function
 def train_model(model, criterion, optimizer, scheduler, num_epochs=25):

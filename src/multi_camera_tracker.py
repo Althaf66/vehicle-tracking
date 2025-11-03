@@ -12,11 +12,16 @@ import os
 import pandas as pd
 from datetime import datetime
 from generate_id import VehicleIDGenerator
+import easyocr
 
 class VehicleClassifier:
     def __init__(self, color_model_path, carname_model_path):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print(self.device)
+        print(torch.cuda.is_available())
+        if torch.cuda.is_available():
+            print(torch.cuda.get_device_name(0))
+
         # Load models
         self.color_model = self.load_model(color_model_path, 'models/color_classes.json')
         self.carname_model = self.load_model(carname_model_path, 'models/carname_classes.json')
@@ -168,20 +173,23 @@ class TemporalSmoother:
 
 
 class MultiCameraTracker:
-    def __init__(self, classifier, id_generator, 
+    def __init__(self, classifier, id_generator,
                  detection_conf=0.4,
                  temporal_window=10,
                  iou_threshold=0.5):
         self.classifier = classifier
         self.id_generator = id_generator
         self.vehicle_detector = YOLO('yolov8n.pt')
-        
+
+        # Initialize EasyOCR reader for date/time extraction
+        self.ocr_reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
+
         # Temporal smoothers for each camera
         self.smoothers = {}
         self.temporal_window = temporal_window
         self.iou_threshold = iou_threshold
         self.detection_conf = detection_conf
-        
+
         # Track vehicles across cameras
         self.global_tracks = defaultdict(lambda: {
             'color': None,
@@ -189,9 +197,10 @@ class MultiCameraTracker:
             'last_seen': {},
             'cameras': set(),
             'first_seen': None,
-            'confidence_history': []
+            'confidence_history': [],
+            'detection_datetime': None
         })
-        
+
         # Statistics
         self.stats = {
             'total_detections': 0,
@@ -207,17 +216,52 @@ class MultiCameraTracker:
                 iou_threshold=self.iou_threshold
             )
         return self.smoothers[camera_id]
-    
+
+    def extract_datetime_from_frame(self, frame):
+        """
+        Extract date and time from the top right corner of CCTV footage using EasyOCR
+        Returns: date_time string or None if extraction fails
+        """
+        try:
+            # Get frame dimensions
+            height, width = frame.shape[:2]
+
+            # Define ROI for top right corner (adjust these values as needed for your video)
+            # Typically CCTV timestamp is in top right, let's take top 15% height and right 40% width
+            roi_height = int(height * 0.15)
+            roi_width = int(width * 0.4)
+            roi_x = width - roi_width
+            roi_y = 0
+
+            # Extract ROI
+            roi = frame[roi_y:roi_y+roi_height, roi_x:roi_x+roi_width]
+
+            # Use EasyOCR to extract text
+            results = self.ocr_reader.readtext(roi, detail=0)
+
+            # Combine all detected text
+            if results:
+                datetime_text = ' '.join(results)
+                return datetime_text.strip()
+
+            return None
+        except Exception as e:
+            # Silently handle OCR errors to avoid disrupting video processing
+            return None
+
     def process_frame(self, frame, camera_id, frame_number):
         """Process single frame with temporal smoothing and confidence filtering"""
+        # Extract date/time from CCTV footage
+        frame_datetime = self.extract_datetime_from_frame(frame)
+
         # Detect vehicles
         results = self.vehicle_detector(
-            frame, 
+            frame,
             classes=[2, 5, 7],  # car, bus, truck
             conf=self.detection_conf,
             verbose=False
         )
-        
+
         detections = []
         smoother = self.get_or_create_smoother(camera_id)
         
@@ -253,7 +297,8 @@ class MultiCameraTracker:
                         'color': color,
                         'car_name': car_name,
                         'confidence': min(color_conf, carname_conf),
-                        'status': 'LOW_CONFIDENCE'
+                        'status': 'LOW_CONFIDENCE',
+                        'datetime': frame_datetime
                     })
                     continue
                 
@@ -273,7 +318,7 @@ class MultiCameraTracker:
                 if final_id is not None:
                     if self.global_tracks[final_id]['first_seen'] is None:
                         self.global_tracks[final_id]['first_seen'] = frame_number
-                    
+
                     self.global_tracks[final_id]['color'] = color
                     self.global_tracks[final_id]['car_name'] = car_name
                     self.global_tracks[final_id]['last_seen'][camera_id] = frame_number
@@ -281,6 +326,9 @@ class MultiCameraTracker:
                     self.global_tracks[final_id]['confidence_history'].append(
                         min(color_conf, carname_conf)
                     )
+                    # Store the datetime when vehicle was detected
+                    if frame_datetime and self.global_tracks[final_id]['detection_datetime'] is None:
+                        self.global_tracks[final_id]['detection_datetime'] = frame_datetime
                 
                 detections.append({
                     'id': final_id,
@@ -291,7 +339,8 @@ class MultiCameraTracker:
                     'color_conf': color_conf,
                     'carname_conf': carname_conf,
                     'confidence': min(color_conf, carname_conf),
-                    'status': 'TRACKED' if smoothed_id else 'NEW'
+                    'status': 'TRACKED' if smoothed_id else 'NEW',
+                    'datetime': frame_datetime
                 })
         
         # Cleanup old tracks
@@ -367,8 +416,8 @@ def main():
     
     # Open videos
     videos = {
-        'entrance_cam': cv2.VideoCapture('data/raw_videos/a1.mp4'),
-        'ec_department_cam': cv2.VideoCapture('data/raw_videos/a2.mp4')
+        'entrance_cam': cv2.VideoCapture('data/raw_videos/newent.mp4'),
+        'ec_department_cam': cv2.VideoCapture('data/raw_videos/newec.mp4')
     }
 
     # Create output directory
@@ -382,7 +431,7 @@ def main():
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         writers[cam_id] = cv2.VideoWriter(
-            f'output/tracked_videos/tracked_a{cam_id}.mp4',
+            f'output/tracked_videos/tracked_b{cam_id}.mp4',
             fourcc, fps, (width, height)
         )
     
@@ -459,6 +508,7 @@ def main():
         
         # Print to console
         print(f"\n  ID {vehicle_id}: {info['color']} {info['car_name']}")
+        print(f"    Detection Date/Time: {info['detection_datetime'] if info['detection_datetime'] else 'N/A'}")
         print(f"    Cameras: {sorted(info['cameras'])}")
         print(f"    First seen: Frame {info['first_seen']}")
         print(f"    Last seen: {info['last_seen']}")
@@ -469,15 +519,16 @@ def main():
             'Vehicle ID': vehicle_id,
             'Color': info['color'],
             'Car Name': info['car_name'],
+            'Detection Date/Time': info['detection_datetime'] if info['detection_datetime'] else 'N/A',
             'Cameras': ', '.join(map(str, sorted(info['cameras']))),
             'First Seen Frame': info['first_seen'],
             'Average Confidence': f"{avg_conf:.2f}",
         }
-        
+
         # Add last seen frames for each camera
         for cam_id, frame in info['last_seen'].items():
             excel_row[f'Last Seen (Camera {cam_id})'] = frame
-        
+
         excel_data.append(excel_row)
     
     if excel_data:

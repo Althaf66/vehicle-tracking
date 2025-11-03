@@ -10,8 +10,8 @@ from tqdm import tqdm
 class VehicleColorCategorizer:
     def __init__(self, model_path='models/color_classifier.pth',
                  classes_path='models/color_classes.json',
-                 input_dir='data/extracted_vehicles/ce1',
-                 output_base_dir='data/categorized_by_color'):
+                 input_dir='data/extracted_vehicles/n2',
+                 output_base_dir='data/categorized_by_color/n2'):
         """
         Initialize the vehicle color categorizer.
 
@@ -25,7 +25,7 @@ class VehicleColorCategorizer:
         self.classes_path = classes_path
         self.input_dir = input_dir
         self.output_base_dir = output_base_dir
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Load class names
         with open(self.classes_path, 'r') as f:
@@ -187,8 +187,8 @@ def main():
     # Configuration
     MODEL_PATH = 'models/color_classifier.pth'
     CLASSES_PATH = 'models/color_classes.json'
-    INPUT_DIR = 'data/extracted_vehicles/ce1'
-    OUTPUT_DIR = 'data/categorized_by_color'
+    INPUT_DIR = 'data/extracted_vehicles/n2'
+    OUTPUT_DIR = 'data/categorized_by_color/n2'
 
     # Create categorizer instance
     categorizer = VehicleColorCategorizer(
@@ -203,7 +203,7 @@ def main():
     # Set min_confidence to filter low-confidence predictions (e.g., 0.5 for 50%)
     categorizer.categorize_all_images(
         copy_files=True,  # Change to False if you want to move instead of copy
-        min_confidence=0.0  # Adjust this value to filter low-confidence predictions
+        min_confidence=0.5  # Adjust this value to filter low-confidence predictions
     )
 
 

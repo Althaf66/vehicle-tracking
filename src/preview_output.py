@@ -9,6 +9,10 @@ from collections import defaultdict, deque
 from scipy import stats
 import time
 from generate_id import VehicleIDGenerator
+import easyocr
+import pandas as pd
+import os
+from datetime import datetime
 
 class VehicleClassifier:
     def __init__(self, color_model_path, carname_model_path):
@@ -165,20 +169,23 @@ class TemporalSmoother:
 
 
 class MultiCameraTracker:
-    def __init__(self, classifier, id_generator, 
+    def __init__(self, classifier, id_generator,
                  detection_conf=0.4,
                  temporal_window=10,
                  iou_threshold=0.5):
         self.classifier = classifier
         self.id_generator = id_generator
         self.vehicle_detector = YOLO('yolov8n.pt')
-        
+
+        # Initialize EasyOCR reader for date/time extraction
+        self.ocr_reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
+
         # Temporal smoothers for each camera
         self.smoothers = {}
         self.temporal_window = temporal_window
         self.iou_threshold = iou_threshold
         self.detection_conf = detection_conf
-        
+
         # Track vehicles across cameras
         self.global_tracks = defaultdict(lambda: {
             'color': None,
@@ -186,9 +193,10 @@ class MultiCameraTracker:
             'last_seen': {},
             'cameras': set(),
             'first_seen': None,
-            'confidence_history': []
+            'confidence_history': [],
+            'detection_datetime': None
         })
-        
+
         # Statistics
         self.stats = {
             'total_detections': 0,
@@ -204,17 +212,52 @@ class MultiCameraTracker:
                 iou_threshold=self.iou_threshold
             )
         return self.smoothers[camera_id]
-    
+
+    def extract_datetime_from_frame(self, frame):
+        """
+        Extract date and time from the top right corner of CCTV footage using EasyOCR
+        Returns: date_time string or None if extraction fails
+        """
+        try:
+            # Get frame dimensions
+            height, width = frame.shape[:2]
+
+            # Define ROI for top right corner (adjust these values as needed for your video)
+            # Typically CCTV timestamp is in top right, let's take top 15% height and right 40% width
+            roi_height = int(height * 0.15)
+            roi_width = int(width * 0.4)
+            roi_x = width - roi_width
+            roi_y = 0
+
+            # Extract ROI
+            roi = frame[roi_y:roi_y+roi_height, roi_x:roi_x+roi_width]
+
+            # Use EasyOCR to extract text
+            results = self.ocr_reader.readtext(roi, detail=0)
+
+            # Combine all detected text
+            if results:
+                datetime_text = ' '.join(results)
+                return datetime_text.strip()
+
+            return None
+        except Exception as e:
+            # Silently handle OCR errors to avoid disrupting video processing
+            return None
+
     def process_frame(self, frame, camera_id, frame_number):
         """Process single frame with temporal smoothing and confidence filtering"""
+        # Extract date/time from CCTV footage
+        frame_datetime = self.extract_datetime_from_frame(frame)
+
         # Detect vehicles
         results = self.vehicle_detector(
-            frame, 
+            frame,
             classes=[2, 5, 7],  # car, bus, truck
             conf=self.detection_conf,
             verbose=False
         )
-        
+
         detections = []
         smoother = self.get_or_create_smoother(camera_id)
         
@@ -250,7 +293,8 @@ class MultiCameraTracker:
                         'color': color,
                         'car_name': car_name,
                         'confidence': min(color_conf, carname_conf),
-                        'status': 'LOW_CONFIDENCE'
+                        'status': 'LOW_CONFIDENCE',
+                        'datetime': frame_datetime
                     })
                     continue
                 
@@ -270,7 +314,7 @@ class MultiCameraTracker:
                 if final_id is not None:
                     if self.global_tracks[final_id]['first_seen'] is None:
                         self.global_tracks[final_id]['first_seen'] = frame_number
-                    
+
                     self.global_tracks[final_id]['color'] = color
                     self.global_tracks[final_id]['car_name'] = car_name
                     self.global_tracks[final_id]['last_seen'][camera_id] = frame_number
@@ -278,7 +322,10 @@ class MultiCameraTracker:
                     self.global_tracks[final_id]['confidence_history'].append(
                         min(color_conf, carname_conf)
                     )
-                
+                    # Store the datetime when vehicle was detected
+                    if frame_datetime and self.global_tracks[final_id]['detection_datetime'] is None:
+                        self.global_tracks[final_id]['detection_datetime'] = frame_datetime
+
                 detections.append({
                     'id': final_id,
                     'track_id': track_id,
@@ -288,7 +335,8 @@ class MultiCameraTracker:
                     'color_conf': color_conf,
                     'carname_conf': carname_conf,
                     'confidence': min(color_conf, carname_conf),
-                    'status': 'TRACKED' if smoothed_id else 'NEW'
+                    'status': 'TRACKED' if smoothed_id else 'NEW',
+                    'datetime': frame_datetime
                 })
         
         # Cleanup old tracks
@@ -338,6 +386,52 @@ class MultiCameraTracker:
         }
 
 
+def save_excel_report(tracker, frame_number=None):
+    """Save current tracking data to Excel report"""
+    excel_data = []
+
+    for vehicle_id, info in sorted(tracker.global_tracks.items()):
+        avg_conf = np.mean(info['confidence_history']) if info['confidence_history'] else 0
+
+        # Prepare row for Excel
+        excel_row = {
+            'Vehicle ID': vehicle_id,
+            'Color': info['color'],
+            'Car Name': info['car_name'],
+            'Detection Date/Time': info['detection_datetime'] if info['detection_datetime'] else 'N/A',
+            'Cameras': ', '.join(map(str, sorted(info['cameras']))),
+            'First Seen Frame': info['first_seen'],
+            'Average Confidence': f"{avg_conf:.2f}",
+        }
+
+        # Add last seen frames for each camera
+        for cam_id, frame in info['last_seen'].items():
+            excel_row[f'Last Seen (Camera {cam_id})'] = frame
+
+        excel_data.append(excel_row)
+
+    if excel_data:
+        # Create output directory if it doesn't exist
+        os.makedirs('output/reports', exist_ok=True)
+
+        # Create DataFrame and save to Excel
+        df = pd.DataFrame(excel_data)
+
+        # Generate filename with timestamp and frame number
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        if frame_number is not None:
+            excel_path = f'output/reports/vehicle_tracking_frame{frame_number}_{timestamp}.xlsx'
+        else:
+            excel_path = f'output/reports/vehicle_tracking_final_{timestamp}.xlsx'
+
+        # Save to Excel
+        df.to_excel(excel_path, index=False, sheet_name='Vehicle Tracking')
+        print(f"  → Excel report saved: {excel_path}")
+        return excel_path
+
+    return None
+
+
 def main():
     print("Initializing Multi-Camera Vehicle Tracking System...")
     print("=" * 60)
@@ -364,8 +458,8 @@ def main():
     
     # Open videos
     videos = {
-        'cam1': cv2.VideoCapture('data/raw_videos/a1.mp4'),
-        'cam2': cv2.VideoCapture('data/raw_videos/a2.mp4')
+        'cam1': cv2.VideoCapture('data/raw_videos/newent.mp4'),
+        'cam2': cv2.VideoCapture('data/raw_videos/newec.mp4')
     }
     
     # Get video properties
@@ -425,6 +519,9 @@ def main():
             fps_processing = frame_number / elapsed
             print(f"Frame {frame_number} | FPS: {fps_processing:.2f} | "
                   f"Unique vehicles: {len(tracker.global_tracks)}")
+
+            # Save Excel report periodically
+            save_excel_report(tracker, frame_number)
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -450,13 +547,23 @@ def main():
     print(f"  Unique vehicles tracked: {stats['unique_vehicles']}")
     
     print(f"\nVehicle Details:")
+
     for vehicle_id, info in sorted(tracker.global_tracks.items()):
         avg_conf = np.mean(info['confidence_history']) if info['confidence_history'] else 0
+
+        # Print to console
         print(f"\n  ID {vehicle_id}: {info['color']} {info['car_name']}")
+        print(f"    Detection Date/Time: {info['detection_datetime'] if info['detection_datetime'] else 'N/A'}")
         print(f"    Cameras: {sorted(info['cameras'])}")
         print(f"    First seen: Frame {info['first_seen']}")
         print(f"    Last seen: {info['last_seen']}")
         print(f"    Avg confidence: {avg_conf:.2f}")
+
+    # Save final Excel report
+    print(f"\nSaving final Excel report...")
+    excel_path = save_excel_report(tracker)
+    if excel_path:
+        print(f"Final vehicle tracking report saved to: {excel_path}")
 
 if __name__ == "__main__":
     main()
