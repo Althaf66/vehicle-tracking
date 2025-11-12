@@ -36,16 +36,12 @@ python train_color_classifier.py
 python train_carname_classifier.py
 ```
 
-## Step 6: Run multi-camera tracking:
+## Step 6: Run camera tracking:
 To get preview output in the window run
 ```
 python preview_output.py
 ```
-OR for getting output video then run 
-```
-python multi_camera_tracker.py
-```
-Output video shoud be saved in `../output/tracked_videos/`
+Output video shoud be saved in `output/tracked_videos/` and excel file saved on `output/report/`
 
 
 

@@ -74,9 +74,9 @@ class TemporalSmoother:
     """
     Maintains temporal consistency of vehicle IDs using a sliding window
     """
-    def __init__(self, window_size=10, iou_threshold=0.5):
-        self.window_size = window_size  # Number of frames to look back
-        self.iou_threshold = iou_threshold
+    def __init__(self, window_size=15, iou_threshold=0.4):
+        self.window_size = window_size  # Number of frames to look back (increased for better smoothing)
+        self.iou_threshold = iou_threshold  # Lowered to better track same vehicle
         # Store recent detections: {track_id: deque of (bbox, vehicle_id, confidence)}
         self.track_history = defaultdict(lambda: deque(maxlen=window_size))
         self.next_track_id = 0
@@ -130,30 +130,35 @@ class TemporalSmoother:
     def get_smoothed_id(self, track_id, current_vehicle_id, current_conf, bbox):
         """
         Apply temporal smoothing to get stable vehicle ID
-        Uses majority voting over the sliding window
+        Uses majority voting over the sliding window with improved stability
         """
         # Add current detection to track history
         self.track_history[track_id].append((bbox, current_vehicle_id, current_conf))
-        
+
         # Get all vehicle IDs from history (excluding None)
         history = self.track_history[track_id]
         vehicle_ids = [vid for _, vid, _ in history if vid is not None]
-        
+
         if len(vehicle_ids) == 0:
             return None
-        
-        # Use majority voting (mode)
+
+        # Use majority voting (mode) with confidence weighting
         if len(vehicle_ids) >= 3:  # Need at least 3 samples for smoothing
             mode_result = stats.mode(vehicle_ids, keepdims=True)
             smoothed_id = int(mode_result.mode[0])
-            
+
             # Calculate stability score (how many frames agree)
             stability = list(vehicle_ids).count(smoothed_id) / len(vehicle_ids)
-            
-            # Only return smoothed ID if stability is high enough
-            if stability >= 0.6:  # At least 60% agreement
+
+            # Improved stability threshold - more lenient to maintain ID consistency
+            # Once a vehicle is tracked for a while, prefer the most common ID
+            if len(vehicle_ids) >= 5:
+                # After 5+ frames, lower threshold to maintain ID stability
+                if stability >= 0.5:  # At least 50% agreement for established tracks
+                    return smoothed_id
+            elif stability >= 0.6:  # At least 60% agreement for new tracks
                 return smoothed_id
-        
+
         # If not enough data or low stability, return current ID
         return current_vehicle_id
     
@@ -309,14 +314,17 @@ class MultiCameraTracker:
                 
                 # Use smoothed ID if available
                 final_id = smoothed_id if smoothed_id is not None else vehicle_id
-                
+
                 # Update global tracking
                 if final_id is not None:
+                    canonical_color, canonical_car_name = self.id_generator.get_attributes_from_id(final_id)
+
                     if self.global_tracks[final_id]['first_seen'] is None:
                         self.global_tracks[final_id]['first_seen'] = frame_number
 
-                    self.global_tracks[final_id]['color'] = color
-                    self.global_tracks[final_id]['car_name'] = car_name
+                    # Store ID-derived labels (not prediction labels) for consistency
+                    self.global_tracks[final_id]['color'] = canonical_color
+                    self.global_tracks[final_id]['car_name'] = canonical_car_name
                     self.global_tracks[final_id]['last_seen'][camera_id] = frame_number
                     self.global_tracks[final_id]['cameras'].add(camera_id)
                     self.global_tracks[final_id]['confidence_history'].append(
@@ -326,12 +334,20 @@ class MultiCameraTracker:
                     if frame_datetime and self.global_tracks[final_id]['detection_datetime'] is None:
                         self.global_tracks[final_id]['detection_datetime'] = frame_datetime
 
+                    # Use canonical labels for display consistency
+                    display_color = canonical_color
+                    display_car_name = canonical_car_name
+                else:
+                    # If no valid ID, use prediction labels
+                    display_color = color
+                    display_car_name = car_name
+
                 detections.append({
                     'id': final_id,
                     'track_id': track_id,
                     'bbox': bbox,
-                    'color': color,
-                    'car_name': car_name,
+                    'color': display_color,  # Use ID-derived label for consistency
+                    'car_name': display_car_name,  # Use ID-derived label for consistency
                     'color_conf': color_conf,
                     'carname_conf': carname_conf,
                     'confidence': min(color_conf, carname_conf),
@@ -412,7 +428,7 @@ def save_excel_report(tracker, frame_number=None):
 
     if excel_data:
         # Create output directory if it doesn't exist
-        os.makedirs('output/reports', exist_ok=True)
+        os.makedirs('output/report', exist_ok=True)
 
         # Create DataFrame and save to Excel
         df = pd.DataFrame(excel_data)
@@ -420,9 +436,9 @@ def save_excel_report(tracker, frame_number=None):
         # Generate filename with timestamp and frame number
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         if frame_number is not None:
-            excel_path = f'output/reports/vehicle_tracking_frame{frame_number}_{timestamp}.xlsx'
+            excel_path = f'output/report/vehicle_tracking_frame{frame_number}_{timestamp}.xlsx'
         else:
-            excel_path = f'output/reports/vehicle_tracking_final_{timestamp}.xlsx'
+            excel_path = f'output/report/vehicle_tracking_final_{timestamp}.xlsx'
 
         # Save to Excel
         df.to_excel(excel_path, index=False, sheet_name='Vehicle Tracking')
@@ -444,36 +460,36 @@ def main():
     
     # Configure thresholds
     id_generator = VehicleIDGenerator(
-        color_confidence_threshold=0.6,    # Adjust as needed
-        carname_confidence_threshold=0.7   # Adjust as needed
+        color_confidence_threshold=0.75,    # Adjust as needed
+        carname_confidence_threshold=0.75   # Adjust as needed
     )
     
     tracker = MultiCameraTracker(
-        classifier, 
+        classifier,
         id_generator,
         detection_conf=0.4,      # YOLO detection confidence
-        temporal_window=10,      # Frames for temporal smoothing
-        iou_threshold=0.5        # IoU threshold for matching
+        temporal_window=15,      # Frames for temporal smoothing (increased for stability)
+        iou_threshold=0.4        # IoU threshold for matching (lowered for better tracking)
     )
     
     # Open videos
     videos = {
-        'cam1': cv2.VideoCapture('data/raw_videos/newent.mp4'),
-        'cam2': cv2.VideoCapture('data/raw_videos/newec.mp4')
+        'entrance': cv2.VideoCapture('data/raw_videos/camera_entrance_new.mp4'),
+        'ec_department': cv2.VideoCapture('data/raw_videos/camera_ec_new.mp4')
     }
     
     # Get video properties
-    fps = int(videos['cam1'].get(cv2.CAP_PROP_FPS))
+    fps = int(videos['entrance'].get(cv2.CAP_PROP_FPS))
     
     # Video writers for output (optional)
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     writers = {
-        'cam1': cv2.VideoWriter('output/tracked_videos/camera1_tracked.mp4', 
+        'entrance': cv2.VideoWriter('output/tracked_videos/entrance_tracked.mp4', 
                                 fourcc, fps, 
-                                (int(videos['cam1'].get(3)), int(videos['cam1'].get(4)))),
-        'cam2': cv2.VideoWriter('output/tracked_videos/camera2_tracked.mp4', 
+                                (int(videos['entrance'].get(3)), int(videos['entrance'].get(4)))),
+        'ec_department': cv2.VideoWriter('output/tracked_videos/ec_department_tracked.mp4', 
                                 fourcc, fps,
-                                (int(videos['cam2'].get(3)), int(videos['cam2'].get(4))))
+                                (int(videos['ec_department'].get(3)), int(videos['ec_department'].get(4))))
     }
     
     frame_number = 0
@@ -519,9 +535,6 @@ def main():
             fps_processing = frame_number / elapsed
             print(f"Frame {frame_number} | FPS: {fps_processing:.2f} | "
                   f"Unique vehicles: {len(tracker.global_tracks)}")
-
-            # Save Excel report periodically
-            save_excel_report(tracker, frame_number)
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

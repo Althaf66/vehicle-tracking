@@ -8,8 +8,15 @@ from sklearn.metrics import (
     confusion_matrix,
     classification_report,
     precision_recall_fscore_support,
-    accuracy_score
+    accuracy_score,
+    precision_recall_curve,
+    roc_curve,
+    auc,
+    average_precision_score,
+    roc_auc_score
 )
+from sklearn.preprocessing import label_binarize
+from itertools import cycle
 import numpy as np
 import json
 import os
@@ -295,7 +302,259 @@ class ModelEvaluator:
         print(f"✓ Saved top-k accuracy plot to {save_path}")
         plt.close()
 
-    def evaluate(self, save_dir):
+    def plot_pr_curves(self, y_true, probs, save_dir):
+        """
+        Plot Precision-Recall curves with both one-vs-rest and micro/macro averaging
+        """
+        n_classes = len(self.class_names)
+
+        # Binarize the labels for one-vs-rest
+        y_true_bin = label_binarize(y_true, classes=range(n_classes))
+
+        # Compute PR curve and average precision for each class
+        precision = dict()
+        recall = dict()
+        average_precision = dict()
+
+        for i in range(n_classes):
+            precision[i], recall[i], _ = precision_recall_curve(y_true_bin[:, i], probs[:, i])
+            average_precision[i] = average_precision_score(y_true_bin[:, i], probs[:, i])
+
+        # Compute micro-average PR curve
+        precision["micro"], recall["micro"], _ = precision_recall_curve(
+            y_true_bin.ravel(), probs.ravel()
+        )
+        average_precision["micro"] = average_precision_score(y_true_bin, probs, average="micro")
+
+        # Compute macro-average PR curve
+        average_precision["macro"] = average_precision_score(y_true_bin, probs, average="macro")
+
+        # Plot all PR curves
+        plt.figure(figsize=(12, 8))
+        colors = cycle(['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                       '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])
+
+        # Plot micro-average curve (thick line)
+        plt.plot(recall["micro"], precision["micro"],
+                label=f'Micro-average (AP = {average_precision["micro"]:.3f})',
+                color='deeppink', linestyle='--', linewidth=3)
+
+        # Plot individual class curves
+        for i, color in zip(range(n_classes), colors):
+            plt.plot(recall[i], precision[i], color=color, lw=2,
+                    label=f'{self.class_names[i]} (AP = {average_precision[i]:.3f})')
+
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('Recall', fontsize=12, fontweight='bold')
+        plt.ylabel('Precision', fontsize=12, fontweight='bold')
+        plt.title(f'Precision-Recall Curves (One-vs-Rest) - {self.model_name}',
+                 fontsize=14, fontweight='bold')
+        plt.legend(loc='best', fontsize=9, ncol=2)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        save_path = os.path.join(save_dir, f'{self.model_name}_pr_curves.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Saved Precision-Recall curves to {save_path}")
+        plt.close()
+
+        # Create a second plot with macro/micro averages only (cleaner view)
+        plt.figure(figsize=(10, 6))
+        plt.plot(recall["micro"], precision["micro"],
+                label=f'Micro-average (AP = {average_precision["micro"]:.3f})',
+                color='deeppink', linestyle='-', linewidth=3)
+
+        # Calculate macro-average curve by averaging all class curves
+        all_recall = np.linspace(0, 1, 100)
+        mean_precision = np.zeros_like(all_recall)
+        for i in range(n_classes):
+            mean_precision += np.interp(all_recall, recall[i][::-1], precision[i][::-1])
+        mean_precision /= n_classes
+
+        plt.plot(all_recall, mean_precision,
+                label=f'Macro-average (AP = {average_precision["macro"]:.3f})',
+                color='navy', linestyle='-', linewidth=3)
+
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('Recall', fontsize=12, fontweight='bold')
+        plt.ylabel('Precision', fontsize=12, fontweight='bold')
+        plt.title(f'Precision-Recall Curves (Averaged) - {self.model_name}',
+                 fontsize=14, fontweight='bold')
+        plt.legend(loc='best', fontsize=11)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        save_path = os.path.join(save_dir, f'{self.model_name}_pr_curves_averaged.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Saved averaged Precision-Recall curves to {save_path}")
+        plt.close()
+
+    def plot_training_history(self, history_path, save_dir):
+        """
+        Plot training and validation accuracy/loss over epochs
+        """
+        # Check if history file exists
+        if not os.path.exists(history_path):
+            print(f"⚠ Training history not found at {history_path}")
+            print(f"  Skipping training history plots. Train the model first to generate history.")
+            return
+
+        # Load training history
+        with open(history_path, 'r') as f:
+            history = json.load(f)
+
+        epochs = range(1, len(history['train_acc']) + 1)
+
+        # Create figure with 2 subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+        # Plot accuracy
+        ax1.plot(epochs, history['train_acc'], 'b-o', label='Training Accuracy', linewidth=2, markersize=6)
+        ax1.plot(epochs, history['val_acc'], 'r-s', label='Validation Accuracy', linewidth=2, markersize=6)
+        ax1.set_xlabel('Epoch', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Accuracy', fontsize=12, fontweight='bold')
+        ax1.set_title(f'Training and Validation Accuracy - {self.model_name}', fontsize=14, fontweight='bold')
+        ax1.legend(loc='best', fontsize=11)
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim([0, 1.05])
+
+        # Add best accuracy annotation
+        best_val_acc = max(history['val_acc'])
+        best_epoch = history['val_acc'].index(best_val_acc) + 1
+        ax1.annotate(f'Best: {best_val_acc:.4f}\n(Epoch {best_epoch})',
+                    xy=(best_epoch, best_val_acc),
+                    xytext=(10, -30), textcoords='offset points',
+                    bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.7),
+                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0', color='red', lw=2),
+                    fontsize=10, fontweight='bold')
+
+        # Plot loss
+        ax2.plot(epochs, history['train_loss'], 'b-o', label='Training Loss', linewidth=2, markersize=6)
+        ax2.plot(epochs, history['val_loss'], 'r-s', label='Validation Loss', linewidth=2, markersize=6)
+        ax2.set_xlabel('Epoch', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Loss', fontsize=12, fontweight='bold')
+        ax2.set_title(f'Training and Validation Loss - {self.model_name}', fontsize=14, fontweight='bold')
+        ax2.legend(loc='best', fontsize=11)
+        ax2.grid(True, alpha=0.3)
+
+        # Add best loss annotation
+        best_val_loss = min(history['val_loss'])
+        best_loss_epoch = history['val_loss'].index(best_val_loss) + 1
+        ax2.annotate(f'Best: {best_val_loss:.4f}\n(Epoch {best_loss_epoch})',
+                    xy=(best_loss_epoch, best_val_loss),
+                    xytext=(10, 30), textcoords='offset points',
+                    bbox=dict(boxstyle='round,pad=0.5', fc='lightgreen', alpha=0.7),
+                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0', color='green', lw=2),
+                    fontsize=10, fontweight='bold')
+
+        plt.tight_layout()
+        save_path = os.path.join(save_dir, f'{self.model_name}_training_history.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Saved training history plot to {save_path}")
+        plt.close()
+
+    def plot_roc_curves(self, y_true, probs, save_dir):
+        """
+        Plot ROC curves with both one-vs-rest and micro/macro averaging
+        """
+        n_classes = len(self.class_names)
+
+        # Binarize the labels for one-vs-rest
+        y_true_bin = label_binarize(y_true, classes=range(n_classes))
+
+        # Compute ROC curve and AUC for each class
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+
+        for i in range(n_classes):
+            fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], probs[:, i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+
+        # Compute micro-average ROC curve and AUC
+        fpr["micro"], tpr["micro"], _ = roc_curve(y_true_bin.ravel(), probs.ravel())
+        roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+
+        # Compute macro-average ROC curve and AUC
+        # Aggregate all false positive rates
+        all_fpr = np.unique(np.concatenate([fpr[i] for i in range(n_classes)]))
+
+        # Interpolate all ROC curves at these points
+        mean_tpr = np.zeros_like(all_fpr)
+        for i in range(n_classes):
+            mean_tpr += np.interp(all_fpr, fpr[i], tpr[i])
+
+        # Average it and compute AUC
+        mean_tpr /= n_classes
+
+        fpr["macro"] = all_fpr
+        tpr["macro"] = mean_tpr
+        roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
+
+        # Plot all ROC curves
+        plt.figure(figsize=(12, 8))
+        colors = cycle(['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                       '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])
+
+        # Plot micro-average curve (thick line)
+        plt.plot(fpr["micro"], tpr["micro"],
+                label=f'Micro-average (AUC = {roc_auc["micro"]:.3f})',
+                color='deeppink', linestyle='--', linewidth=3)
+
+        # Plot individual class curves
+        for i, color in zip(range(n_classes), colors):
+            plt.plot(fpr[i], tpr[i], color=color, lw=2,
+                    label=f'{self.class_names[i]} (AUC = {roc_auc[i]:.3f})')
+
+        # Plot diagonal line (random classifier)
+        plt.plot([0, 1], [0, 1], 'k--', lw=2, label='Random Classifier')
+
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate', fontsize=12, fontweight='bold')
+        plt.ylabel('True Positive Rate', fontsize=12, fontweight='bold')
+        plt.title(f'ROC Curves (One-vs-Rest) - {self.model_name}',
+                 fontsize=14, fontweight='bold')
+        plt.legend(loc='lower right', fontsize=9, ncol=2)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        save_path = os.path.join(save_dir, f'{self.model_name}_roc_curves.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Saved ROC curves to {save_path}")
+        plt.close()
+
+        # Create a second plot with macro/micro averages only (cleaner view)
+        plt.figure(figsize=(10, 6))
+        plt.plot(fpr["micro"], tpr["micro"],
+                label=f'Micro-average (AUC = {roc_auc["micro"]:.3f})',
+                color='deeppink', linestyle='-', linewidth=3)
+
+        plt.plot(fpr["macro"], tpr["macro"],
+                label=f'Macro-average (AUC = {roc_auc["macro"]:.3f})',
+                color='navy', linestyle='-', linewidth=3)
+
+        # Plot diagonal line (random classifier)
+        plt.plot([0, 1], [0, 1], 'k--', lw=2, label='Random Classifier')
+
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate', fontsize=12, fontweight='bold')
+        plt.ylabel('True Positive Rate', fontsize=12, fontweight='bold')
+        plt.title(f'ROC Curves (Averaged) - {self.model_name}',
+                 fontsize=14, fontweight='bold')
+        plt.legend(loc='lower right', fontsize=11)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        save_path = os.path.join(save_dir, f'{self.model_name}_roc_curves_averaged.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Saved averaged ROC curves to {save_path}")
+        plt.close()
+
+    def evaluate(self, save_dir, history_path=None):
         """Run complete evaluation and generate all visualizations"""
         print(f"\n{'='*60}")
         print(f"Evaluating {self.model_name}")
@@ -312,11 +571,18 @@ class ModelEvaluator:
 
         # Generate all visualizations
         print("Generating visualizations...\n")
+
+        # Plot training history if available
+        if history_path:
+            self.plot_training_history(history_path, save_dir)
+
         self.plot_confusion_matrix(y_true, y_pred, save_dir)
         self.plot_normalized_confusion_matrix(y_true, y_pred, save_dir)
         self.plot_metrics_per_class(y_true, y_pred, save_dir)
         self.plot_accuracy_by_class(y_true, y_pred, save_dir)
         self.plot_top_k_accuracy(y_true, probs, save_dir)
+        self.plot_pr_curves(y_true, probs, save_dir)
+        self.plot_roc_curves(y_true, probs, save_dir)
         self.save_classification_report(y_true, y_pred, save_dir)
 
         print(f"\n{'='*60}")
@@ -361,7 +627,10 @@ def main():
             data_dir='data/training_data/color',
             model_name='color_classifier'
         )
-        color_evaluator.evaluate(color_eval_dir)
+        color_evaluator.evaluate(
+            save_dir=color_eval_dir,
+            history_path='models/color_classifier_history_new.json'
+        )
 
         # Evaluate Car Name Classifier
         print("\n" + "🚗 " * 20)
@@ -371,7 +640,10 @@ def main():
             data_dir='data/training_data/car_name',
             model_name='carname_classifier'
         )
-        carname_evaluator.evaluate(carname_eval_dir)
+        carname_evaluator.evaluate(
+            save_dir=carname_eval_dir,
+            history_path='models/car_name_classifier_history_new.json'
+        )
 
         # Final summary
         print("\n" + "="*60)
@@ -381,11 +653,16 @@ def main():
         print(f"  - Color Classifier: {color_eval_dir}")
         print(f"  - Car Name Classifier: {carname_eval_dir}")
         print("\nGenerated files for each model:")
+        print("  • training_history.png (accuracy & loss vs epoch)")
         print("  • confusion_matrix.png (raw counts)")
         print("  • confusion_matrix_normalized.png (percentages)")
         print("  • metrics_per_class.png (precision/recall/F1)")
         print("  • accuracy_by_class.png")
         print("  • top_k_accuracy.png")
+        print("  • pr_curves.png (Precision-Recall curves - all classes)")
+        print("  • pr_curves_averaged.png (Precision-Recall curves - micro/macro avg)")
+        print("  • roc_curves.png (ROC curves - all classes)")
+        print("  • roc_curves_averaged.png (ROC curves - micro/macro avg)")
         print("  • classification_report.txt")
         print("\n" + "="*60 + "\n")
 
