@@ -10,8 +10,8 @@ from tqdm import tqdm
 class VehicleColorCategorizer:
     def __init__(self, model_path='models/color_classifier.pth',
                  classes_path='models/color_classes.json',
-                 input_dir='data/extracted_vehicles/n2',
-                 output_base_dir='data/categorized_by_color/n2'):
+                 input_dir='data/extracted_vehicles/sports',
+                 output_base_dir='data/categorized_by_color/sports'):
         """
         Initialize the vehicle color categorizer.
 
@@ -187,8 +187,8 @@ def main():
     # Configuration
     MODEL_PATH = 'models/color_classifier.pth'
     CLASSES_PATH = 'models/color_classes.json'
-    INPUT_DIR = 'data/extracted_vehicles/n2'
-    OUTPUT_DIR = 'data/categorized_by_color/n2'
+    INPUT_DIR = 'data/extracted_vehicles/sports'
+    OUTPUT_DIR = 'data/categorized_by_color/sports'
 
     # Create categorizer instance
     categorizer = VehicleColorCategorizer(

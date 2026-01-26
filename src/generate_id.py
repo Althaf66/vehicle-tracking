@@ -4,10 +4,10 @@ import numpy as np
 class VehicleIDGenerator:
     def __init__(self, color_confidence_threshold=0.6, carname_confidence_threshold=0.7):
         # Load class mappings
-        with open('models/color_classes.json', 'r') as f:
+        with open('src/models/color_classes.json', 'r') as f:
             self.color_classes = json.load(f)
 
-        with open('models/carname_classes.json', 'r') as f:
+        with open('src/models/carname_classes.json', 'r') as f:
             self.carname_classes = json.load(f)
 
         # Create ID mapping

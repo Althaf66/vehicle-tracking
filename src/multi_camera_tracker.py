@@ -13,6 +13,7 @@ import pandas as pd
 from datetime import datetime
 from generate_id import VehicleIDGenerator
 import easyocr
+from license_plate_recognizer import LicensePlateRecognizer
 
 class VehicleClassifier:
     def __init__(self, color_model_path, carname_model_path):
@@ -176,13 +177,17 @@ class MultiCameraTracker:
     def __init__(self, classifier, id_generator,
                  detection_conf=0.4,
                  temporal_window=10,
-                 iou_threshold=0.5):
+                 iou_threshold=0.5,
+                 plate_recognizer=None):
         self.classifier = classifier
         self.id_generator = id_generator
         self.vehicle_detector = YOLO('yolov8n.pt')
 
         # Initialize EasyOCR reader for date/time extraction
         self.ocr_reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
+
+        # License plate recognizer (optional, for Camera 1 only)
+        self.plate_recognizer = plate_recognizer
 
         # Temporal smoothers for each camera
         self.smoothers = {}
@@ -198,14 +203,18 @@ class MultiCameraTracker:
             'cameras': set(),
             'first_seen': None,
             'confidence_history': [],
-            'detection_datetime': None
+            'detection_datetime': None,
+            'license_plate': None,  # For Camera 1 entrance only
+            'plate_confidence': 0.0
         })
 
         # Statistics
         self.stats = {
             'total_detections': 0,
             'accepted_detections': 0,
-            'rejected_low_confidence': 0
+            'rejected_low_confidence': 0,
+            'plates_detected': 0,
+            'plates_failed': 0
         }
     
     def get_or_create_smoother(self, camera_id):
@@ -249,8 +258,16 @@ class MultiCameraTracker:
             # Silently handle OCR errors to avoid disrupting video processing
             return None
 
-    def process_frame(self, frame, camera_id, frame_number):
-        """Process single frame with temporal smoothing and confidence filtering"""
+    def process_frame(self, frame, camera_id, frame_number, camera_type='monitoring'):
+        """
+        Process single frame with temporal smoothing and confidence filtering.
+
+        Args:
+            frame: Video frame to process
+            camera_id: Identifier for the camera
+            frame_number: Current frame number
+            camera_type: 'entrance' for Camera 1 (with LPR), 'monitoring' for others
+        """
         # Extract date/time from CCTV footage
         frame_datetime = self.extract_datetime_from_frame(frame)
 
@@ -264,30 +281,48 @@ class MultiCameraTracker:
 
         detections = []
         smoother = self.get_or_create_smoother(camera_id)
-        
+
         if results[0].boxes is not None:
             for box in results[0].boxes:
                 self.stats['total_detections'] += 1
-                
+
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 bbox = (x1, y1, x2, y2)
                 detection_conf = float(box.conf[0])
-                
+
                 # Crop vehicle
                 vehicle_crop = frame[y1:y2, x1:x2]
-                
+
                 # Skip small detections
                 if vehicle_crop.shape[0] < 50 or vehicle_crop.shape[1] < 50:
                     continue
-                
+
                 # Classify with confidence
                 color, car_name, color_conf, carname_conf = self.classifier.predict(vehicle_crop)
-                
+
+                # License plate recognition (only for entrance camera)
+                plate_number = None
+                plate_conf = 0.0
+                plate_bbox = None
+
+                if camera_type == 'entrance' and self.plate_recognizer is not None:
+                    try:
+                        plate_number, plate_conf, plate_bbox = self.plate_recognizer.recognize_plate(
+                            vehicle_crop, min_confidence=0.5
+                        )
+                        if plate_number:
+                            self.stats['plates_detected'] += 1
+                        else:
+                            self.stats['plates_failed'] += 1
+                    except Exception as e:
+                        # Silently handle plate recognition errors
+                        self.stats['plates_failed'] += 1
+
                 # Generate ID with confidence check
                 vehicle_id, is_valid = self.id_generator.generate_id(
                     color, car_name, color_conf, carname_conf
                 )
-                
+
                 if not is_valid:
                     # Reject low confidence prediction
                     self.stats['rejected_low_confidence'] += 1
@@ -298,22 +333,24 @@ class MultiCameraTracker:
                         'car_name': car_name,
                         'confidence': min(color_conf, carname_conf),
                         'status': 'LOW_CONFIDENCE',
-                        'datetime': frame_datetime
+                        'datetime': frame_datetime,
+                        'license_plate': plate_number,
+                        'plate_confidence': plate_conf
                     })
                     continue
-                
+
                 self.stats['accepted_detections'] += 1
-                
+
                 # Match to track and apply temporal smoothing
                 track_id = smoother.match_detection_to_track(bbox, detections)
                 smoothed_id = smoother.get_smoothed_id(
-                    track_id, vehicle_id, 
+                    track_id, vehicle_id,
                     min(color_conf, carname_conf), bbox
                 )
-                
+
                 # Use smoothed ID if available
                 final_id = smoothed_id if smoothed_id is not None else vehicle_id
-                
+
                 # Update global tracking
                 if final_id is not None:
                     if self.global_tracks[final_id]['first_seen'] is None:
@@ -329,7 +366,12 @@ class MultiCameraTracker:
                     # Store the datetime when vehicle was detected
                     if frame_datetime and self.global_tracks[final_id]['detection_datetime'] is None:
                         self.global_tracks[final_id]['detection_datetime'] = frame_datetime
-                
+
+                    # Store license plate if detected (entrance camera only)
+                    if plate_number and self.global_tracks[final_id]['license_plate'] is None:
+                        self.global_tracks[final_id]['license_plate'] = plate_number
+                        self.global_tracks[final_id]['plate_confidence'] = plate_conf
+
                 detections.append({
                     'id': final_id,
                     'track_id': track_id,
@@ -340,21 +382,25 @@ class MultiCameraTracker:
                     'carname_conf': carname_conf,
                     'confidence': min(color_conf, carname_conf),
                     'status': 'TRACKED' if smoothed_id else 'NEW',
-                    'datetime': frame_datetime
+                    'datetime': frame_datetime,
+                    'license_plate': plate_number,
+                    'plate_confidence': plate_conf,
+                    'plate_bbox': plate_bbox
                 })
-        
+
         # Cleanup old tracks
         smoother.cleanup_old_tracks(frame_number)
-        
+
         return detections
     
-    def draw_detections(self, frame, detections, show_confidence=True):
-        """Draw bounding boxes and IDs with confidence information"""
+    def draw_detections(self, frame, detections, show_confidence=True, show_plates=True):
+        """Draw bounding boxes and IDs with confidence information and license plates"""
         for det in detections:
             x1, y1, x2, y2 = det['bbox']
             vehicle_id = det['id']
             status = det.get('status', 'TRACKED')
-            
+            plate_number = det.get('license_plate')
+
             # Color based on status
             if status == 'LOW_CONFIDENCE':
                 box_color = (0, 0, 255)  # Red for low confidence
@@ -365,20 +411,34 @@ class MultiCameraTracker:
             else:
                 box_color = (0, 255, 0)  # Green for tracked
                 label = f"ID:{vehicle_id} {det['color']} {det['car_name']}"
-            
+
+            # Add plate number if available
+            if show_plates and plate_number:
+                label += f" | Plate: {plate_number}"
+
             # Draw box
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
-            
+
             # Add confidence if requested
             if show_confidence and 'confidence' in det:
                 label += f" ({det['confidence']:.2f})"
-            
+
             # Draw label with background
             (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(frame, (x1, y1-label_h-10), (x1+label_w, y1), box_color, -1)
             cv2.putText(frame, label, (x1, y1-5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-        
+
+            # Draw plate bounding box if available
+            if show_plates and plate_number and det.get('plate_bbox'):
+                px, py, pw, ph = det['plate_bbox']
+                # Adjust coordinates to be relative to full frame
+                plate_x1 = x1 + px
+                plate_y1 = y1 + py
+                plate_x2 = plate_x1 + pw
+                plate_y2 = plate_y1 + ph
+                cv2.rectangle(frame, (plate_x1, plate_y1), (plate_x2, plate_y2), (255, 255, 0), 2)
+
         return frame
     
     def get_statistics(self):
@@ -393,25 +453,29 @@ class MultiCameraTracker:
 def main():
     print("Initializing Multi-Camera Vehicle Tracking System...")
     print("=" * 60)
-    
+
     # Initialize components
     classifier = VehicleClassifier(
         'models/color_classifier.pth',
         'models/car_name_classifier.pth'
     )
-    
+
     # Configure thresholds
     id_generator = VehicleIDGenerator(
         color_confidence_threshold=0.6,    # Adjust as needed
         carname_confidence_threshold=0.7   # Adjust as needed
     )
-    
+
+    # Initialize license plate recognizer (for entrance camera only)
+    plate_recognizer = LicensePlateRecognizer()
+
     tracker = MultiCameraTracker(
-        classifier, 
+        classifier,
         id_generator,
         detection_conf=0.4,      # YOLO detection confidence
         temporal_window=10,      # Frames for temporal smoothing
-        iou_threshold=0.5        # IoU threshold for matching
+        iou_threshold=0.5,       # IoU threshold for matching
+        plate_recognizer=plate_recognizer  # Add plate recognizer
     )
     
     # Open videos
@@ -498,7 +562,14 @@ def main():
     print(f"  Rejected (low confidence): {stats['rejected_low_confidence']}")
     print(f"  Acceptance rate: {stats['acceptance_rate']:.2%}")
     print(f"  Unique vehicles tracked: {stats['unique_vehicles']}")
-    
+
+    print(f"\nLicense Plate Recognition Statistics:")
+    print(f"  Plates detected: {stats['plates_detected']}")
+    print(f"  Plates failed: {stats['plates_failed']}")
+    if stats['plates_detected'] + stats['plates_failed'] > 0:
+        plate_success_rate = stats['plates_detected'] / (stats['plates_detected'] + stats['plates_failed'])
+        print(f"  Plate detection rate: {plate_success_rate:.2%}")
+
     print(f"\nVehicle Details:")
     
     # Prepare data for Excel
@@ -508,6 +579,8 @@ def main():
         
         # Print to console
         print(f"\n  ID {vehicle_id}: {info['color']} {info['car_name']}")
+        if info['license_plate']:
+            print(f"    License Plate: {info['license_plate']} (conf: {info['plate_confidence']:.2f})")
         print(f"    Detection Date/Time: {info['detection_datetime'] if info['detection_datetime'] else 'N/A'}")
         print(f"    Cameras: {sorted(info['cameras'])}")
         print(f"    First seen: Frame {info['first_seen']}")
@@ -517,6 +590,8 @@ def main():
         # Prepare row for Excel
         excel_row = {
             'Vehicle ID': vehicle_id,
+            'License Plate': info['license_plate'] if info['license_plate'] else 'Not Detected',
+            'Plate Confidence': f"{info['plate_confidence']:.2f}" if info['license_plate'] else 'N/A',
             'Color': info['color'],
             'Car Name': info['car_name'],
             'Detection Date/Time': info['detection_datetime'] if info['detection_datetime'] else 'N/A',

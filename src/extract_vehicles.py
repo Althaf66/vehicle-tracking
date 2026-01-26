@@ -30,7 +30,7 @@ def extract_vehicles_from_video(video_path, output_dir):
                 
                 # Save if crop is valid size
                 if vehicle_crop.shape[0] > 50 and vehicle_crop.shape[1] > 50:
-                    filename = f"vehicle_n2{vehicle_count:05d}.jpg"
+                    filename = f"vehicle_7{vehicle_count:05d}.jpg"
                     cv2.imwrite(os.path.join(output_dir, filename), vehicle_crop)
                     vehicle_count += 1
         
@@ -39,4 +39,4 @@ def extract_vehicles_from_video(video_path, output_dir):
     cap.release()
     print(f"Extracted {vehicle_count} vehicle images")
 
-extract_vehicles_from_video('data/raw_videos/camera_ec_new.mp4', 'data/extracted_vehicles/n2/')
+extract_vehicles_from_video('data/raw_videos/7_vehicles_only.mp4', 'data/extracted_vehicles/sportsnew/')
