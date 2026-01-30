@@ -55,3 +55,15 @@ tzdata==2025.2
 ultralytics==8.3.204
 ultralytics-thop==2.0.17
 urllib3==2.5.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.20
+pydantic==2.10.6
+pydantic-core==2.27.2
+python-dotenv==1.0.1
+email-validator==2.2.0
+bcrypt==4.2.1
+cryptography==44.0.0
+annotated-types==0.7.0

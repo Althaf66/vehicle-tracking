@@ -1,0 +1,123 @@
+.tracking-table {
+  font-size: 14px;
+}
+
+.tracking-table .vehicle-id {
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #3498db;
+  text-align: center;
+}
+
+.tracking-table .plate-number {
+  font-weight: 600;
+  color: #2c3e50;
+  font-family: 'Courier New', monospace;
+}
+
+.tracking-table .no-plate {
+  color: #95a5a6;
+  font-style: italic;
+}
+
+.confidence-score {
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background-color: #27ae60;
+  color: white;
+  font-size: 12px;
+}
+
+.camera-path {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.camera-icon {
+  background-color: #3498db;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.camera-arrow {
+  color: #7f8c8d;
+  font-weight: bold;
+}
+
+.status-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.active {
+  background-color: #27ae60;
+  color: white;
+}
+
+.status-badge.inactive {
+  background-color: #95a5a6;
+  color: white;
+}
+
+.active-vehicle {
+  background-color: #ffe6e6;
+}
+
+.active-vehicle:hover {
+  background-color: #ffd6d6;
+}
+
+.inactive-vehicle {
+  opacity: 0.7;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-label input[type='checkbox'] {
+  cursor: pointer;
+}
+
+.tracking-footer {
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid #e9ecef;
+  text-align: center;
+  color: #6c757d;
+}
+
+.no-data {
+  text-align: center;
+  padding: 40px;
+  color: #6c757d;
+}
+
+.table-container {
+  overflow-x: auto;
+}
+
+@media (max-width: 1200px) {
+  .tracking-table {
+    font-size: 12px;
+  }
+
+  .camera-icon {
+    padding: 3px 6px;
+    font-size: 11px;
+  }
+}

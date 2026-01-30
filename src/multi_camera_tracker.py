@@ -11,9 +11,9 @@ import time
 import os
 import pandas as pd
 from datetime import datetime
-from generate_id import VehicleIDGenerator
+from src.generate_id import VehicleIDGenerator
 import easyocr
-from license_plate_recognizer import LicensePlateRecognizer
+from src.license_plate_recognizer import LicensePlateRecognizer
 
 class VehicleClassifier:
     def __init__(self, color_model_path, carname_model_path):
@@ -24,8 +24,8 @@ class VehicleClassifier:
             print(torch.cuda.get_device_name(0))
 
         # Load models
-        self.color_model = self.load_model(color_model_path, 'models/color_classes.json')
-        self.carname_model = self.load_model(carname_model_path, 'models/carname_classes.json')
+        self.color_model = self.load_model(color_model_path, 'src/models/color_classes.json')
+        self.carname_model = self.load_model(carname_model_path, 'src/models/carname_classes.json')
         
         # Transform
         self.transform = transforms.Compose([

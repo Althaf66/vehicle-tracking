@@ -1,0 +1,75 @@
+.authorized-vehicles-container {
+  padding: 20px 0;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.page-header .page-title {
+  margin: 0;
+}
+
+.plate-cell {
+  font-weight: 600;
+  color: #2c3e50;
+  font-family: 'Courier New', monospace;
+  font-size: 15px;
+}
+
+.vehicle-type-badge {
+  background-color: #e9ecef;
+  color: #495057;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.notes-cell {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.delete-modal {
+  max-width: 400px;
+}
+
+.delete-warning {
+  color: #dc3545;
+  font-size: 14px;
+  margin-top: 10px;
+}
+
+textarea.form-control {
+  resize: vertical;
+  font-family: inherit;
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .action-buttons .btn {
+    width: 100%;
+  }
+}
