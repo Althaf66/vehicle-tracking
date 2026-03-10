@@ -6,3 +6,4 @@ src/output
 src/prompt.md
 __pycache__
 frontend/node_modules
+.worktrees
