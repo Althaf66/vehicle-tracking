@@ -77,7 +77,8 @@ class Database:
                     cameras_passed TEXT NOT NULL,
                     camera_timestamps TEXT NOT NULL,
                     is_active BOOLEAN DEFAULT TRUE,
-                    notes TEXT
+                    notes TEXT,
+                    plate_confidence REAL DEFAULT 0.0
                 )
             ''')
 
@@ -88,6 +89,17 @@ class Database:
                     ADD COLUMN confidence_score REAL
                 ''')
                 print("Added confidence_score column to existing table")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
+            # Add plate_confidence column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute('''
+                    ALTER TABLE unauthorized_vehicle_tracking
+                    ADD COLUMN plate_confidence REAL DEFAULT 0.0
+                ''')
+                print("Added plate_confidence column to existing table")
             except sqlite3.OperationalError:
                 # Column already exists
                 pass
@@ -214,6 +226,7 @@ class Database:
     def add_unauthorized_tracking(self, tracking_id: str, plate_number: str = None,
                                  color: str = None, car_name: str = None,
                                  confidence_score: float = None,
+                                 plate_confidence: float = 0.0,
                                  first_seen_time: datetime = None,
                                  camera_id: str = 'camera1') -> int:
         """Add a new unauthorized vehicle tracking record"""
@@ -228,10 +241,12 @@ class Database:
             cursor.execute('''
                 INSERT INTO unauthorized_vehicle_tracking
                 (tracking_id, plate_number, color, car_name, confidence_score,
-                 first_seen_time, last_seen_time, cameras_passed, camera_timestamps, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+                 plate_confidence, first_seen_time, last_seen_time,
+                 cameras_passed, camera_timestamps, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
             ''', (tracking_id, plate_number, color, car_name, confidence_score,
-                  first_seen_time, first_seen_time, cameras_passed, camera_timestamps))
+                  plate_confidence, first_seen_time, first_seen_time,
+                  cameras_passed, camera_timestamps))
             return cursor.lastrowid
 
     def update_unauthorized_tracking(self, tracking_id: str, camera_id: str,
@@ -274,6 +289,19 @@ class Database:
             ''', (json.dumps(cameras_passed), json.dumps(camera_timestamps),
                   timestamp, tracking_id))
 
+            return cursor.rowcount > 0
+
+    def update_plate_if_better(self, tracking_id: str, plate_number: str,
+                              plate_confidence: float) -> bool:
+        """Update plate number only if new confidence is higher than stored."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE unauthorized_vehicle_tracking
+                SET plate_number = ?, plate_confidence = ?
+                WHERE tracking_id = ?
+                AND (plate_confidence IS NULL OR plate_confidence < ?)
+            ''', (plate_number, plate_confidence, tracking_id, plate_confidence))
             return cursor.rowcount > 0
 
     def get_unauthorized_tracking_by_id(self, tracking_id: str) -> Optional[Dict[str, Any]]:

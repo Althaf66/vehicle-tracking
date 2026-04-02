@@ -50,5 +50,13 @@ class Config:
     PLATE_VALIDATION_MIN_SCORE = float(os.getenv('PLATE_VALIDATION_MIN_SCORE', '0.7'))
     STRICT_PLATE_VALIDATION = os.getenv('STRICT_PLATE_VALIDATION', 'false').lower() == 'true'
 
+    # YOLO Plate Detection + Ollama OCR Settings
+    PLATE_DETECTOR_MODEL_PATH = os.getenv('PLATE_DETECTOR_MODEL_PATH', os.path.join(MODELS_DIR, 'plate_detector', 'best.pt'))
+    PLATE_DETECTION_CONFIDENCE = float(os.getenv('PLATE_DETECTION_CONFIDENCE', '0.5'))
+    OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+    OLLAMA_OCR_MODEL = os.getenv('OLLAMA_OCR_MODEL', 'glm-ocr')
+    LPR_REQUEST_TIMEOUT = int(os.getenv('LPR_REQUEST_TIMEOUT', '30'))
+    LPR_FRAME_SKIP = int(os.getenv('LPR_FRAME_SKIP', '3'))
+
 
 config = Config()

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import UnauthorizedVehicleTracker from '../components/UnauthorizedVehicleTracker';
+import VehicleDetectionLog from '../components/VehicleDetectionLog';
 import { camerasAPI } from '../services/api';
 import './Home.css';
 
@@ -116,6 +117,11 @@ const Home = () => {
               )}
             </div>
           ))}
+        </div>
+
+        {/* Vehicle Detection Log */}
+        <div className="detection-log-section">
+          <VehicleDetectionLog />
         </div>
 
         {/* Unauthorized Vehicle Tracking Table */}

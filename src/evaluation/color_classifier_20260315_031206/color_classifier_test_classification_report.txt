@@ -1,0 +1,22 @@
+Test Classification Report - color_classifier
+Generated: 2026-03-15 03:12:44
+================================================================================
+
+              precision    recall  f1-score   support
+
+       black     0.9889    0.9780    0.9834        91
+        blue     0.9896    0.9896    0.9896        96
+        grey     0.9505    0.9697    0.9600        99
+      maroon     1.0000    1.0000    1.0000         6
+         red     0.9941    0.9941    0.9941       169
+      silver     0.9286    0.8864    0.9070        88
+       white     0.9789    0.9858    0.9823       423
+      yellow     1.0000    1.0000    1.0000       139
+
+    accuracy                         0.9793      1111
+   macro avg     0.9788    0.9754    0.9771      1111
+weighted avg     0.9792    0.9793    0.9792      1111
+
+
+Overall Test Accuracy: 0.9793 (97.93%)
+Total test samples: 1111

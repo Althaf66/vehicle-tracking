@@ -1,0 +1,92 @@
+Test Classification Report - carname_classifier
+Generated: 2026-03-15 03:14:32
+================================================================================
+
+                           precision    recall  f1-score   support
+
+                  audi_q3     1.0000    1.0000    1.0000         4
+                   bmw_x3     1.0000    0.8889    0.9412         9
+          cheverlot_spark     1.0000    1.0000    1.0000         2
+              college_bus     1.0000    1.0000    1.0000        50
+                datsun_go     1.0000    1.0000    1.0000        12
+            datsun_redigo     1.0000    1.0000    1.0000         1
+             eicher_lorry     1.0000    1.0000    1.0000         6
+               fiat_linea     1.0000    1.0000    1.0000         9
+             force_gurkha     1.0000    1.0000    1.0000         6
+            ford_ecosport     1.0000    0.9615    0.9804        26
+                ford_figo     0.9286    1.0000    0.9630        13
+         ford_figo-aspire     1.0000    0.9231    0.9600        39
+                ford_ikon     1.0000    1.0000    1.0000         3
+              honda_amaze     0.9474    0.9000    0.9231        20
+               honda_city     0.9655    0.9655    0.9655        29
+                honda_crv     1.0000    1.0000    1.0000         1
+            honda_elevate     1.0000    1.0000    1.0000         4
+               honda_jazz     0.8571    1.0000    0.9231         6
+            hyundai_creta     1.0000    1.0000    1.0000        41
+            hyundai_exter     1.0000    0.8824    0.9375        17
+              hyundai_i10     0.9412    1.0000    0.9697        16
+              hyundai_i20     1.0000    0.9677    0.9836        31
+              hyundai_ion     1.0000    1.0000    1.0000         6
+           hyundai_santro     1.0000    1.0000    1.0000         7
+            hyundai_xcent     1.0000    1.0000    1.0000         4
+               kia_carens     1.0000    1.0000    1.0000         2
+               kia_seltos     1.0000    1.0000    1.0000         6
+               kia_sonnet     0.8750    0.9545    0.9130        22
+          mahindra_TUV300     1.0000    1.0000    1.0000         5
+             mahindra_be6     1.0000    1.0000    1.0000         2
+            mahindra_thar     1.0000    1.0000    1.0000         6
+          mahindra_xev_9e     0.7500    1.0000    0.8571         3
+          mahindra_xuv300     1.0000    1.0000    1.0000         5
+          mahindra_xuv500     1.0000    1.0000    1.0000         5
+          mahindra_xuv700     1.0000    1.0000    1.0000        14
+            mahindra_xylo     1.0000    1.0000    1.0000         9
+        marutisuzuki_alto     0.9167    0.8800    0.8980        25
+     marutisuzuki_alto800     0.9167    1.0000    0.9565        11
+     marutisuzuki_altok10     1.0000    1.0000    1.0000        14
+      marutisuzuki_baleno     0.9394    1.0000    0.9688        31
+     marutisuzuki_celerio     0.9286    0.9286    0.9286        42
+        marutisuzuki_ciaz     0.8571    1.0000    0.9231         6
+        marutisuzuki_eeco     1.0000    1.0000    1.0000         4
+      marutisuzuki_ertiga     0.9500    1.0000    0.9744        19
+    marutisuzuki_expresso     1.0000    0.9643    0.9818        28
+       marutisuzuki_fronx     1.0000    1.0000    1.0000         2
+ marutisuzuki_grandvitara     1.0000    1.0000    1.0000         5
+       marutisuzuki_ignis     1.0000    0.9714    0.9855        35
+       marutisuzuki_jimny     0.0000    0.0000    0.0000         1
+        marutisuzuki_omni     1.0000    0.8750    0.9333         8
+        marutisuzuki_ritz     1.0000    1.0000    1.0000         5
+       marutisuzuki_swift     1.0000    1.0000    1.0000        65
+ marutisuzuki_swiftdezire     0.9286    1.0000    0.9630        39
+marutisuzuki_vitarabrezza     0.9630    1.0000    0.9811        26
+      marutisuzuki_wagonr     1.0000    0.9796    0.9897        49
+         marutisuzuki_zen     1.0000    1.0000    1.0000        18
+    mercedesbenz_gleclass     1.0000    1.0000    1.0000         1
+                    mg_ZS     1.0000    0.8000    0.8889         5
+                 mg_comet     0.8750    0.8750    0.8750         8
+               mg_windsor     1.0000    1.0000    1.0000         7
+             renault_kwid     1.0000    0.9375    0.9677        16
+             skoda_kushaq     1.0000    1.0000    1.0000         2
+              skoda_rapid     1.0000    1.0000    1.0000         4
+                tata_curv     1.0000    1.0000    1.0000        12
+              tata_indigo     1.0000    1.0000    1.0000         2
+                tata_nano     1.0000    1.0000    1.0000         2
+               tata_nexon     1.0000    1.0000    1.0000        10
+               tata_punch     1.0000    1.0000    1.0000        17
+               tata_tiago     1.0000    0.9167    0.9565        12
+                taxi_auto     1.0000    1.0000    1.0000        48
+             toyota_etios     0.9615    1.0000    0.9804        25
+           toyota_hyryder     1.0000    1.0000    1.0000         2
+            toyota_innova     1.0000    0.9412    0.9697        17
+            toyota_qualis     0.0000    0.0000    0.0000        12
+      toyota_urbancruiser     0.0000    0.0000    0.0000         2
+          volkswagen_polo     0.0000    0.0000    0.0000        11
+        volkswagen_taigun     0.0000    0.0000    0.0000        20
+         volkswagen_vento     0.0000    0.0000    0.0000         0
+
+                 accuracy                         0.9342      1109
+                macro avg     0.9039    0.9040    0.9031      1109
+             weighted avg     0.9372    0.9342    0.9351      1109
+
+
+Overall Test Accuracy: 0.9342 (93.42%)
+Total test samples: 1109

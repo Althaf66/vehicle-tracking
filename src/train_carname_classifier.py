@@ -33,7 +33,15 @@ dataloaders = {
     'val': DataLoader(image_datasets['val'], batch_size=32, shuffle=False, num_workers=4)
 }
 
-dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+# Load test dataset if it exists
+test_dir = os.path.join(data_dir, 'test')
+has_test = os.path.exists(test_dir) and len(os.listdir(test_dir)) > 0
+if has_test:
+    image_datasets['test'] = datasets.ImageFolder(test_dir, data_transforms['val'])
+    dataloaders['test'] = DataLoader(image_datasets['test'], batch_size=32, shuffle=False, num_workers=4)
+    print(f"Test set loaded: {len(image_datasets['test'])} images")
+
+dataset_sizes = {x: len(image_datasets[x]) for x in image_datasets}
 class_names = image_datasets['train'].classes
 num_classes = len(class_names)
 
@@ -51,7 +59,9 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
         'train_loss': [],
         'train_acc': [],
         'val_loss': [],
-        'val_acc': []
+        'val_acc': [],
+        'test_loss': [],
+        'test_acc': []
     }
 
     for epoch in range(num_epochs):
@@ -100,6 +110,28 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
             if phase == 'val' and epoch_acc > best_acc:
                 best_acc = epoch_acc
                 torch.save(model.state_dict(), 'models/car_name_classifier.pth')
+
+        # Evaluate on test set if available
+        if has_test:
+            model.eval()
+            test_running_loss = 0.0
+            test_running_corrects = 0
+
+            with torch.no_grad():
+                for inputs, labels in dataloaders['test']:
+                    inputs = inputs.to(device)
+                    labels = labels.to(device)
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    loss = criterion(outputs, labels)
+                    test_running_loss += loss.item() * inputs.size(0)
+                    test_running_corrects += torch.sum(preds == labels.data)
+
+            test_loss = test_running_loss / dataset_sizes['test']
+            test_acc = test_running_corrects.double() / dataset_sizes['test']
+            print(f'test Loss: {test_loss:.4f} Acc: {test_acc:.4f}')
+            history['test_loss'].append(float(test_loss))
+            history['test_acc'].append(float(test_acc))
 
         print()
 

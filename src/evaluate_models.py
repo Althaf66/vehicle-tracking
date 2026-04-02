@@ -65,6 +65,20 @@ class ModelEvaluator:
             num_workers=2
         )
 
+        # Load test dataset if it exists
+        test_dir = os.path.join(data_dir, 'test')
+        if os.path.exists(test_dir):
+            self.test_dataset = datasets.ImageFolder(test_dir, self.transform)
+            self.test_loader = DataLoader(
+                self.test_dataset,
+                batch_size=32,
+                shuffle=False,
+                num_workers=2
+            )
+            self.has_test = True
+        else:
+            self.has_test = False
+
         # Load model
         self.model = self._load_model()
 
@@ -72,6 +86,8 @@ class ModelEvaluator:
         print(f"Classes: {self.class_names}")
         print(f"Number of classes: {self.num_classes}")
         print(f"Validation samples: {len(self.val_dataset)}")
+        if self.has_test:
+            print(f"Test samples: {len(self.test_dataset)}")
         print(f"Device: {self.device}")
         print("-" * 60)
 
@@ -112,6 +128,73 @@ class ModelEvaluator:
                 all_probs.extend(probs.cpu().numpy())
 
         return np.array(all_labels), np.array(all_preds), np.array(all_probs)
+
+    def get_test_predictions(self):
+        """Get predictions and ground truth labels for test set"""
+        all_preds = []
+        all_labels = []
+        all_probs = []
+
+        print(f"Getting test predictions for {self.model_name}...")
+
+        with torch.no_grad():
+            for inputs, labels in self.test_loader:
+                inputs = inputs.to(self.device)
+                outputs = self.model(inputs)
+
+                probs = torch.nn.functional.softmax(outputs, dim=1)
+                _, preds = torch.max(outputs, 1)
+
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+                all_probs.extend(probs.cpu().numpy())
+
+        return np.array(all_labels), np.array(all_preds), np.array(all_probs)
+
+    def plot_test_accuracy(self, y_true, y_pred, probs, save_dir):
+        """Plot per-class accuracy on the test set (unseen data)"""
+        accuracies = []
+        for i in range(len(self.class_names)):
+            class_mask = (y_true == i)
+            class_correct = np.sum((y_true[class_mask] == y_pred[class_mask]))
+            class_total = np.sum(class_mask)
+            accuracy = class_correct / class_total if class_total > 0 else 0
+            accuracies.append(accuracy)
+
+        overall_acc = accuracy_score(y_true, y_pred)
+
+        plt.figure(figsize=(max(10, len(self.class_names) * 0.6), 6))
+        colors = plt.cm.magma(np.linspace(0.2, 0.8, len(self.class_names)))
+        bars = plt.bar(self.class_names, accuracies, color=colors, edgecolor='black', linewidth=1.2)
+
+        plt.xlabel('Classes', fontsize=12, fontweight='bold')
+        plt.ylabel('Accuracy', fontsize=12, fontweight='bold')
+        plt.title(f'Test Accuracy by Class (Unseen Data) - {self.model_name}',
+                  fontsize=14, fontweight='bold')
+        plt.xticks(rotation=45, ha='right')
+        plt.ylim([0, 1.1])
+        plt.grid(True, alpha=0.3, axis='y')
+
+        # Add value labels on bars
+        for bar in bars:
+            height = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{height:.2%}',
+                    ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+        # Annotate overall accuracy
+        plt.axhline(y=overall_acc, color='red', linestyle='--', linewidth=2, alpha=0.7)
+        plt.text(len(self.class_names) - 0.5, overall_acc + 0.02,
+                f'Overall: {overall_acc:.2%}',
+                ha='right', va='bottom', fontsize=12, fontweight='bold',
+                color='red',
+                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.8))
+
+        plt.tight_layout()
+        save_path = os.path.join(save_dir, f'{self.model_name}_test_accuracy.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved test accuracy plot to {save_path}")
+        plt.close()
 
     def plot_confusion_matrix(self, y_true, y_pred, save_dir):
         """Generate and save confusion matrix"""
@@ -169,7 +252,7 @@ class ModelEvaluator:
     def plot_metrics_per_class(self, y_true, y_pred, save_dir):
         """Plot precision, recall, and F1-score for each class"""
         precision, recall, f1, support = precision_recall_fscore_support(
-            y_true, y_pred, labels=range(len(self.class_names))
+            y_true, y_pred, labels=range(len(self.class_names)), zero_division=0
         )
 
         x = np.arange(len(self.class_names))
@@ -248,7 +331,8 @@ class ModelEvaluator:
             y_true,
             y_pred,
             target_names=self.class_names,
-            digits=4
+            digits=4,
+            zero_division=0
         )
 
         # Save to text file
@@ -455,6 +539,69 @@ class ModelEvaluator:
         print(f"✓ Saved training history plot to {save_path}")
         plt.close()
 
+    def plot_test_training_history(self, history_path, save_dir):
+        """
+        Plot test accuracy and test loss over epochs, with train/val as faint reference lines.
+        """
+        if not os.path.exists(history_path):
+            return
+
+        with open(history_path, 'r') as f:
+            history = json.load(f)
+
+        if 'test_acc' not in history or not history['test_acc']:
+            print(f"No test metrics in {history_path}, skipping test training history plot.")
+            return
+
+        epochs = range(1, len(history['test_acc']) + 1)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+        # Plot accuracy
+        ax1.plot(epochs, history['train_acc'], 'b--', label='Train Accuracy', linewidth=1, alpha=0.3)
+        ax1.plot(epochs, history['val_acc'], 'r--', label='Val Accuracy', linewidth=1, alpha=0.3)
+        ax1.plot(epochs, history['test_acc'], 'g-o', label='Test Accuracy', linewidth=2, markersize=6)
+        ax1.set_xlabel('Epoch', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Accuracy', fontsize=12, fontweight='bold')
+        ax1.set_title(f'Test Accuracy Over Epochs - {self.model_name}', fontsize=14, fontweight='bold')
+        ax1.legend(loc='best', fontsize=11)
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim([0, 1.05])
+
+        best_test_acc = max(history['test_acc'])
+        best_acc_epoch = history['test_acc'].index(best_test_acc) + 1
+        ax1.annotate(f'Best: {best_test_acc:.4f}\n(Epoch {best_acc_epoch})',
+                    xy=(best_acc_epoch, best_test_acc),
+                    xytext=(10, -30), textcoords='offset points',
+                    bbox=dict(boxstyle='round,pad=0.5', fc='lightgreen', alpha=0.7),
+                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0', color='green', lw=2),
+                    fontsize=10, fontweight='bold')
+
+        # Plot loss
+        ax2.plot(epochs, history['train_loss'], 'b--', label='Train Loss', linewidth=1, alpha=0.3)
+        ax2.plot(epochs, history['val_loss'], 'r--', label='Val Loss', linewidth=1, alpha=0.3)
+        ax2.plot(epochs, history['test_loss'], 'g-o', label='Test Loss', linewidth=2, markersize=6)
+        ax2.set_xlabel('Epoch', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Loss', fontsize=12, fontweight='bold')
+        ax2.set_title(f'Test Loss Over Epochs - {self.model_name}', fontsize=14, fontweight='bold')
+        ax2.legend(loc='best', fontsize=11)
+        ax2.grid(True, alpha=0.3)
+
+        best_test_loss = min(history['test_loss'])
+        best_loss_epoch = history['test_loss'].index(best_test_loss) + 1
+        ax2.annotate(f'Best: {best_test_loss:.4f}\n(Epoch {best_loss_epoch})',
+                    xy=(best_loss_epoch, best_test_loss),
+                    xytext=(10, 30), textcoords='offset points',
+                    bbox=dict(boxstyle='round,pad=0.5', fc='lightgreen', alpha=0.7),
+                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0', color='green', lw=2),
+                    fontsize=10, fontweight='bold')
+
+        plt.tight_layout()
+        save_path = os.path.join(save_dir, f'{self.model_name}_test_training_history.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved test training history plot to {save_path}")
+        plt.close()
+
     def plot_roc_curves(self, y_true, probs, save_dir):
         """
         Plot ROC curves with both one-vs-rest and micro/macro averaging
@@ -575,6 +722,7 @@ class ModelEvaluator:
         # Plot training history if available
         if history_path:
             self.plot_training_history(history_path, save_dir)
+            self.plot_test_training_history(history_path, save_dir)
 
         self.plot_confusion_matrix(y_true, y_pred, save_dir)
         self.plot_normalized_confusion_matrix(y_true, y_pred, save_dir)
@@ -584,6 +732,35 @@ class ModelEvaluator:
         self.plot_pr_curves(y_true, probs, save_dir)
         self.plot_roc_curves(y_true, probs, save_dir)
         self.save_classification_report(y_true, y_pred, save_dir)
+
+        # Test set evaluation (unseen data)
+        if self.has_test:
+            print(f"\n{'='*60}")
+            print(f"TEST SET EVALUATION (Unseen Data) - {self.model_name}")
+            print(f"{'='*60}\n")
+
+            test_y_true, test_y_pred, test_probs = self.get_test_predictions()
+
+            test_accuracy = accuracy_score(test_y_true, test_y_pred)
+            print(f"Test Accuracy: {test_accuracy:.4f} ({test_accuracy*100:.2f}%)")
+
+            self.plot_test_accuracy(test_y_true, test_y_pred, test_probs, save_dir)
+
+            # Save test classification report
+            test_report = classification_report(
+                test_y_true, test_y_pred,
+                target_names=self.class_names, digits=4, zero_division=0
+            )
+            report_path = os.path.join(save_dir, f'{self.model_name}_test_classification_report.txt')
+            with open(report_path, 'w') as f:
+                f.write(f"Test Classification Report - {self.model_name}\n")
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(test_report)
+                f.write(f"\n\nOverall Test Accuracy: {test_accuracy:.4f} ({test_accuracy*100:.2f}%)\n")
+                f.write(f"Total test samples: {len(test_y_true)}\n")
+            print(f"Saved test classification report to {report_path}")
+            print("\n" + test_report)
 
         print(f"\n{'='*60}")
         print(f"Evaluation complete for {self.model_name}!")
@@ -654,6 +831,7 @@ def main():
         print(f"  - Car Name Classifier: {carname_eval_dir}")
         print("\nGenerated files for each model:")
         print("  • training_history.png (accuracy & loss vs epoch)")
+        print("  • test_training_history.png (test metrics over epochs, if available)")
         print("  • confusion_matrix.png (raw counts)")
         print("  • confusion_matrix_normalized.png (percentages)")
         print("  • metrics_per_class.png (precision/recall/F1)")
@@ -664,6 +842,8 @@ def main():
         print("  • roc_curves.png (ROC curves - all classes)")
         print("  • roc_curves_averaged.png (ROC curves - micro/macro avg)")
         print("  • classification_report.txt")
+        print("  • test_accuracy.png (if test/ data exists)")
+        print("  • test_classification_report.txt (if test/ data exists)")
         print("\n" + "="*60 + "\n")
 
     except Exception as e:

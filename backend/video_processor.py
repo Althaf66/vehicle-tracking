@@ -37,7 +37,11 @@ class VideoProcessor:
         self.vehicle_detector = YOLO(config.YOLO_MODEL_PATH)
 
         # License plate recognizer (for Camera 1 only)
-        self.plate_recognizer = LicensePlateRecognizer(strict_validation=config.STRICT_PLATE_VALIDATION)
+        self.plate_recognizer = LicensePlateRecognizer(
+            plate_model_path=config.PLATE_DETECTOR_MODEL_PATH,
+            plate_detection_confidence=config.PLATE_DETECTION_CONFIDENCE,
+            strict_validation=config.STRICT_PLATE_VALIDATION
+        )
 
         # ID generator for vehicle identification
         self.id_generator = VehicleIDGenerator(
@@ -101,10 +105,12 @@ class VideoProcessor:
                     # Skip if confidence is too low
                     continue
 
-                # License plate recognition
-                plate_number, plate_conf, plate_bbox = self.plate_recognizer.recognize_plate(
-                    vehicle_crop, min_confidence=config.PLATE_RECOGNITION_CONFIDENCE
-                )
+                # License plate recognition (skip frames for performance)
+                plate_number, plate_conf, plate_bbox = None, 0.0, None
+                if frame_number % config.LPR_FRAME_SKIP == 0:
+                    plate_number, plate_conf, plate_bbox = self.plate_recognizer.recognize_plate(
+                        vehicle_crop, min_confidence=config.PLATE_RECOGNITION_CONFIDENCE
+                    )
 
                 # Apply multi-frame aggregation if plate detected
                 if plate_number and vehicle_id:
@@ -138,16 +144,21 @@ class VideoProcessor:
                                 color=color,
                                 car_name=car_name,
                                 confidence_score=confidence_score,
+                                plate_confidence=plate_conf,
                                 camera_id='camera1'
                             )
-                            print(f"[CAMERA1] Created tracking record | ID: {unique_id}")
+                            print(f"[CAMERA1] Created tracking record | ID: {unique_id} | Plate: {plate_number} (conf: {plate_conf:.2f})")
                         else:
                             # Update existing record with camera1 sighting
                             self.db.update_unauthorized_tracking(
                                 tracking_id=unique_id,
                                 camera_id='camera1'
                             )
-                            print(f"[CAMERA1] Updated tracking record | ID: {unique_id}")
+                            # Update plate if this reading has higher confidence
+                            if self.db.update_plate_if_better(unique_id, plate_number, plate_conf):
+                                print(f"[CAMERA1] Updated plate (better confidence) | ID: {unique_id} | Plate: {plate_number} (conf: {plate_conf:.2f})")
+                            else:
+                                print(f"[CAMERA1] Kept existing plate (higher confidence) | ID: {unique_id}")
 
                         # Add/update cache
                         self.unauthorized_cache[unique_id] = {
@@ -259,7 +270,7 @@ class VideoProcessor:
                         tracking_id=unique_id,
                         camera_id=camera_id
                     )
-                    print(f"[{camera_id.upper()}] Updated tracking record | ID: {unique_id}")
+                    # print(f"[{camera_id.upper()}] Updated tracking record | ID: {unique_id}")
                 else:
                     # Create new tracking record for this vehicle
                     self.db.add_unauthorized_tracking(

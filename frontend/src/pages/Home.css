@@ -155,9 +155,14 @@
   background-color: #ffff00;
 }
 
+/* Detection Log Section */
+.detection-log-section {
+  margin-top: 30px;
+}
+
 /* Tracking Section */
 .tracking-section {
-  margin-top: 40px;
+  margin-top: 30px;
 }
 
 /* Responsive Design */
