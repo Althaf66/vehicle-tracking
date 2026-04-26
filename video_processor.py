@@ -40,8 +40,7 @@ class VideoProcessor:
         self.plate_recognizer = LicensePlateRecognizer(
             plate_model_path=config.PLATE_DETECTOR_MODEL_PATH,
             plate_detection_confidence=config.PLATE_DETECTION_CONFIDENCE,
-            strict_validation=config.STRICT_PLATE_VALIDATION,
-            aggregation_window=config.PLATE_AGGREGATION_WINDOW,
+            strict_validation=config.STRICT_PLATE_VALIDATION
         )
 
         # ID generator for vehicle identification

@@ -446,21 +446,25 @@ async def list_cameras(current_user: dict = Depends(get_current_user)):
         camera_type = 'entrance' if camera_id == 'camera1' else 'monitoring'
         has_lpr = camera_id == 'camera1'
         camera_name = f"Camera {camera_id[-1]}"
-        if camera_type == 'entrance':
-            camera_name += " - Entrance (LPR)"
-        else:
-            camera_name += " - Monitoring"
 
-        # Check if video file exists
-        video_status = 'online' if os.path.exists(video_path) else 'offline'
+        if camera_type == 'entrance':
+           camera_name += " - Entrance (LPR)"
+        else:
+           camera_name += " - Monitoring"
+
+    # Check if video file exists OR if it's a live stream URL
+        if video_path.startswith("rtsp"):
+           video_status = 'online'
+        else:
+           video_status = 'online' if os.path.exists(video_path) else 'offline'
 
         cameras.append(CameraInfo(
-            camera_id=camera_id,
-            camera_name=camera_name,
-            camera_type=camera_type,
-            has_lpr=has_lpr,
-            status=video_status
-        ))
+           camera_id=camera_id,
+           camera_name=camera_name,
+           camera_type=camera_type,
+           has_lpr=has_lpr,
+           status=video_status
+       ))
 
     return CameraListResponse(cameras=cameras)
 
@@ -498,7 +502,7 @@ async def stream_camera(camera_id: str, token: str):
         )
 
     video_path = config.CAMERA_VIDEOS[camera_id]
-    if not os.path.exists(video_path):
+    if not video_path.startswith("rtsp") and not os.path.exists(video_path):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Camera {camera_id} is offline - video file not found"

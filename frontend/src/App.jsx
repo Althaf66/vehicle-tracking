@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Home from './pages/Home';
 import AuthorizedVehicles from './pages/AuthorizedVehicles';
+import VehicleLog from './pages/VehicleLog';
 
 // Create a query client for React Query
 const queryClient = new QueryClient({
@@ -56,6 +57,15 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Home />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/vehicle-log"
+        element={
+          <ProtectedRoute>
+            <VehicleLog />
           </ProtectedRoute>
         }
       />

@@ -20,6 +20,7 @@ class LicensePlateRecognizer:
                  plate_detection_confidence=0.5,
                  gpu_enabled=None,
                  strict_validation=False,
+                 aggregation_window=25,
                  **kwargs):
         """
         Initialize the license plate recognizer.
@@ -41,9 +42,9 @@ class LicensePlateRecognizer:
         self.reader = easyocr.Reader(['en'], gpu=gpu_enabled)
         print(f"[LPR] EasyOCR initialized (GPU: {gpu_enabled})")
 
-        # Multi-frame aggregation
+        # Multi-frame aggregation (number of frames held for majority voting)
         self.plate_history = {}
-        self.history_window = 15  # frames (~0.5 sec at 30fps)
+        self.history_window = aggregation_window
 
         # Validation mode
         self.strict_validation = strict_validation
@@ -90,6 +91,10 @@ class LicensePlateRecognizer:
         sharp = cv2.filter2D(big, -1, kernel)
         return sharp
 
+    # Restrict EasyOCR output to plate-valid characters — eliminates lowercase /
+    # punctuation / non-Latin confusions that pollute the voting pool.
+    _OCR_ALLOWLIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+
     def _ocr_plate(self, plate_img: np.ndarray) -> Tuple[Optional[str], float]:
         """
         Run EasyOCR on a plate image with enhanced preprocessing.
@@ -104,7 +109,7 @@ class LicensePlateRecognizer:
         # Strategy 1: 4x upscaled + sharpened (best for small plates)
         enhanced = self._enhance_plate(plate_img)
         try:
-            results = self.reader.readtext(enhanced, detail=1)
+            results = self.reader.readtext(enhanced, detail=1, allowlist=self._OCR_ALLOWLIST)
             for (bbox, text, conf) in results:
                 cleaned = self.clean_plate_text(text)
                 if cleaned and conf > best_conf:
@@ -116,7 +121,7 @@ class LicensePlateRecognizer:
         # Strategy 2: Original image (fallback for already-large plates)
         if best_text is None or best_conf < 0.3:
             try:
-                results = self.reader.readtext(plate_img, detail=1)
+                results = self.reader.readtext(plate_img, detail=1, allowlist=self._OCR_ALLOWLIST)
                 for (bbox, text, conf) in results:
                     cleaned = self.clean_plate_text(text)
                     if cleaned and conf > best_conf:
@@ -180,8 +185,22 @@ class LicensePlateRecognizer:
 
         corrected = list(text)
 
-        digit_to_letter = {'0': 'O', '1': 'I', '8': 'B', '5': 'S', '2': 'Z'}
-        letter_to_digit = {'O': '0', 'I': '1', 'B': '8', 'S': '5', 'Z': '2'}
+        # Common EasyOCR confusions on Indian plates. Expanded beyond the original
+        # five pairs to cover G/6, A/4, T/7, D/0, Q/0, L/1 — all frequent misreads.
+        digit_to_letter = {
+            '0': 'O', '1': 'I', '2': 'Z', '4': 'A', '5': 'S',
+            '6': 'G', '7': 'T', '8': 'B',
+        }
+        letter_to_digit = {
+            'O': '0', 'D': '0', 'Q': '0',
+            'I': '1', 'L': '1',
+            'Z': '2',
+            'A': '4',
+            'S': '5',
+            'G': '6',
+            'T': '7',
+            'B': '8',
+        }
 
         # Positions 0-1: Force letters
         for i in [0, 1]:
@@ -216,21 +235,30 @@ class LicensePlateRecognizer:
         """
         Aggregate plate readings across multiple frames using voting.
 
+        Only plates that pass Indian-format validation (after character-confusion
+        correction) are added to the voting pool. Unvalidated reads are returned
+        as-is but do NOT pollute the history, so voting converges on the true plate.
+
         Returns: (best_plate, aggregated_confidence)
         """
-        if vehicle_id not in self.plate_history:
-            self.plate_history[vehicle_id] = deque(maxlen=self.history_window)
+        # Normalize through format validation / correction before voting.
+        validated, is_valid = self.validate_indian_plate_format(plate)
 
-        self.plate_history[vehicle_id].append({
-            'plate': plate,
-            'confidence': confidence,
-            'timestamp': datetime.now()
-        })
+        if is_valid:
+            plate = validated
+            if vehicle_id not in self.plate_history:
+                self.plate_history[vehicle_id] = deque(maxlen=self.history_window)
+            self.plate_history[vehicle_id].append({
+                'plate': plate,
+                'confidence': confidence,
+                'timestamp': datetime.now()
+            })
 
-        if len(self.plate_history[vehicle_id]) < 3:
+        history = self.plate_history.get(vehicle_id)
+        if not history or len(history) < 3:
             return plate, confidence
 
-        readings = list(self.plate_history[vehicle_id])
+        readings = list(history)
         plates = [r['plate'] for r in readings]
         confidences = [r['confidence'] for r in readings]
 

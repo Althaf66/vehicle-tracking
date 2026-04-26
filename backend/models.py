@@ -86,6 +86,7 @@ class UnauthorizedVehicleTrackingResponse(BaseModel):
     color: Optional[str]
     car_name: Optional[str]
     confidence_score: Optional[float]
+    plate_confidence: Optional[float] = None
     first_seen_time: str
     last_seen_time: str
     cameras_passed: List[str]

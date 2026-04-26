@@ -28,6 +28,13 @@ const Navbar = () => {
             Home
           </Link>
 
+          <Link
+            to="/vehicle-log"
+            className={`navbar-link ${isActive('/vehicle-log')}`}
+          >
+            Vehicle Log
+          </Link>
+
           {isAdmin() && (
             <Link
               to="/authorized-vehicles"
