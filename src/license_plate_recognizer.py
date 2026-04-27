@@ -3,6 +3,7 @@ import numpy as np
 import easyocr
 import torch
 import re
+import pytesseract
 from collections import deque
 from datetime import datetime
 from typing import Optional, Tuple
@@ -49,7 +50,31 @@ class LicensePlateRecognizer:
         # Validation mode
         self.strict_validation = strict_validation
 
+        # Reusable CLAHE instance (avoids creating one per frame)
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+        # Probe whether the Tesseract binary is installed
+        self._tesseract_available = False
+        try:
+            pytesseract.get_tesseract_version()
+            self._tesseract_available = True
+            print("[LPR] Tesseract OCR available")
+        except Exception:
+            print("[LPR] Tesseract OCR not found — skipping Tesseract reads")
+
         print(f"[LPR] Initialized (Strict validation: {strict_validation})")
+
+    def _apply_clahe(self, img: np.ndarray) -> np.ndarray:
+        if len(img.shape) == 3:
+            lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            l = self._clahe.apply(l)
+            return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+        return self._clahe.apply(img)
+
+    def _unsharp_mask(self, img: np.ndarray, strength: float = 1.5) -> np.ndarray:
+        blurred = cv2.GaussianBlur(img, (0, 0), 3)
+        return cv2.addWeighted(img, 1.0 + strength, blurred, -strength, 0)
 
     def detect_plate_region(self, vehicle_crop):
         """
@@ -78,55 +103,104 @@ class LicensePlateRecognizer:
 
         return plate_regions
 
-    def _enhance_plate(self, plate_img: np.ndarray) -> np.ndarray:
+    def _enhance_plate(self, plate_img: np.ndarray) -> dict:
         """
-        Enhance plate crop for OCR: 4x upscale + sharpen.
-        Dramatically improves EasyOCR accuracy on small plate crops.
+        Returns three preprocessed variants targeting different RTSP failure modes:
+          - 'colour'     : bilateral denoise → CLAHE (LAB) → 4x upscale → unsharp mask
+          - 'gray_clahe' : grayscale → bilateral denoise → CLAHE → 4x upscale → unsharp mask
+          - 'binary'     : grayscale → bilateral denoise → 4x upscale → adaptive threshold
         """
         h, w = plate_img.shape[:2]
-        # 4x upscale with cubic interpolation
-        big = cv2.resize(plate_img, (w * 4, h * 4), interpolation=cv2.INTER_CUBIC)
-        # Sharpen
-        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-        sharp = cv2.filter2D(big, -1, kernel)
-        return sharp
+        target = (w * 4, h * 4)
+
+        # --- Variant 1: colour + CLAHE ---
+        denoised = cv2.bilateralFilter(plate_img, 9, 75, 75)
+        clahe_colour = self._apply_clahe(denoised)
+        big_colour = cv2.resize(clahe_colour, target, interpolation=cv2.INTER_CUBIC)
+        colour_var = self._unsharp_mask(big_colour)
+
+        # --- Variant 2: grayscale + CLAHE ---
+        gray = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
+        gray_denoised = cv2.bilateralFilter(gray, 9, 75, 75)
+        gray_clahe = self._clahe.apply(gray_denoised)
+        big_gray = cv2.resize(gray_clahe, target, interpolation=cv2.INTER_CUBIC)
+        gray_var = self._unsharp_mask(big_gray)
+
+        # --- Variant 3: adaptive binary threshold ---
+        big_gray_raw = cv2.resize(gray_denoised, target, interpolation=cv2.INTER_CUBIC)
+        binary_var = cv2.adaptiveThreshold(
+            big_gray_raw, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,
+            11, 2
+        )
+
+        return {'colour': colour_var, 'gray_clahe': gray_var, 'binary': binary_var}
 
     # Restrict EasyOCR output to plate-valid characters — eliminates lowercase /
     # punctuation / non-Latin confusions that pollute the voting pool.
     _OCR_ALLOWLIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
-    def _ocr_plate(self, plate_img: np.ndarray) -> Tuple[Optional[str], float]:
+    def _tesseract_ocr(self, img: np.ndarray, psm: int = 7) -> Tuple[Optional[str], float]:
         """
-        Run EasyOCR on a plate image with enhanced preprocessing.
-        Tries enhanced image first, then original as fallback.
-
-        Returns:
-            Tuple (best_text, best_confidence)
+        Run Tesseract on a plate image. Returns (cleaned_text, confidence 0–1).
+        Silently returns (None, 0.0) if Tesseract binary is not installed.
         """
-        best_text = None
-        best_conf = 0.0
-
-        # Strategy 1: 4x upscaled + sharpened (best for small plates)
-        enhanced = self._enhance_plate(plate_img)
+        if not self._tesseract_available:
+            return None, 0.0
         try:
-            results = self.reader.readtext(enhanced, detail=1, allowlist=self._OCR_ALLOWLIST)
-            for (bbox, text, conf) in results:
-                cleaned = self.clean_plate_text(text)
-                if cleaned and conf > best_conf:
-                    best_text = cleaned
-                    best_conf = conf
+            config = f'--oem 3 --psm {psm} -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+            data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
+            texts, confs = [], []
+            for text, conf in zip(data['text'], data['conf']):
+                text = text.strip()
+                if text and int(conf) > 0:
+                    texts.append(text)
+                    confs.append(int(conf))
+            if texts:
+                cleaned = self.clean_plate_text(''.join(texts))
+                if cleaned:
+                    return cleaned, sum(confs) / len(confs) / 100.0
         except Exception:
             pass
+        return None, 0.0
 
-        # Strategy 2: Original image (fallback for already-large plates)
+    def _ocr_plate(self, plate_img: np.ndarray) -> Tuple[Optional[str], float]:
+        """
+        Multi-variant EasyOCR + Tesseract ensemble.
+        Runs up to 5 reads (3 EasyOCR variants + 2 Tesseract configs) and returns
+        the highest-confidence result. Falls back to original image if all fail.
+        """
+        best_text: Optional[str] = None
+        best_conf: float = 0.0
+
+        def _update(text, conf):
+            nonlocal best_text, best_conf
+            if text and conf > best_conf:
+                best_text, best_conf = text, conf
+
+        variants = self._enhance_plate(plate_img)
+
+        # --- EasyOCR on all 3 variants ---
+        for variant_img in variants.values():
+            try:
+                results = self.reader.readtext(variant_img, detail=1, allowlist=self._OCR_ALLOWLIST)
+                for (_, text, conf) in results:
+                    _update(self.clean_plate_text(text), conf)
+            except Exception:
+                pass
+
+        # --- Tesseract: psm 7 (single line) on gray_clahe ---
+        _update(*self._tesseract_ocr(variants['gray_clahe'], psm=7))
+
+        # --- Tesseract: psm 8 (single word) on binary ---
+        _update(*self._tesseract_ocr(variants['binary'], psm=8))
+
+        # --- Fallback: EasyOCR on original image ---
         if best_text is None or best_conf < 0.3:
             try:
                 results = self.reader.readtext(plate_img, detail=1, allowlist=self._OCR_ALLOWLIST)
-                for (bbox, text, conf) in results:
-                    cleaned = self.clean_plate_text(text)
-                    if cleaned and conf > best_conf:
-                        best_text = cleaned
-                        best_conf = conf
+                for (_, text, conf) in results:
+                    _update(self.clean_plate_text(text), conf)
             except Exception:
                 pass
 
